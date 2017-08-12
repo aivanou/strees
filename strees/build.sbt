@@ -1,0 +1,1 @@
+name := TreeBuild.NamePrefix + "strees"

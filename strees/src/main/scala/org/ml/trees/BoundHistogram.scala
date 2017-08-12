@@ -2,6 +2,7 @@ package org.ml.trees
 
 import scala.annotation.tailrec
 import scala.collection._
+import scala.collection.mutable.ListBuffer
 
 case class Bin(value: Double, count: Int)
 
@@ -20,13 +21,19 @@ sealed trait Histogram {
 }
 
 /**
-  * Represents the histogram of points
+  * Represents the histogram of points.
   *
-  * @param binSeq the sequence of bins
+  * This class represents the approximation of a set of points:
+  * It consists of a set of bins, where each bin is a tuple (point, count).
+  *
+  * When the new point is added to the histogram, it checks if the total amount of bins is greater than the maxBins.
+  * If so, the histogram will reduce the total bins by combining two closest one and producing a mean.
+  *
+  * @param binSeq  the sequence of bins
   * @param maxBins the max amount of bins
   * @param _bounds
   */
-class BoundHistogram(binSeq: Seq[Bin], maxBins: Int, _bounds: (Double, Double)) extends Histogram {
+class BoundHistogram(binSeq: Iterable[Bin], maxBins: Int, _bounds: (Double, Double)) extends Histogram {
 
   private val hist = mutable.TreeMap[Double, Bin]()((p1: Double, p2: Double) => java.lang.Double.compare(p1, p2))
 
@@ -38,8 +45,6 @@ class BoundHistogram(binSeq: Seq[Bin], maxBins: Int, _bounds: (Double, Double)) 
 
   private def _init(): Unit = {
     binSeq.foreach(p => hist.put(p.value, p))
-    //    hist.put(leftBound, Bin(leftBound, 0))
-    //    hist.put(rightBound, Bin(leftBound, 0))
     reduceToMaxSize
   }
 
@@ -55,6 +60,11 @@ class BoundHistogram(binSeq: Seq[Bin], maxBins: Int, _bounds: (Double, Double)) 
   }
 
   def bins: Iterable[Bin] = hist.values
+
+  def merge(h: BoundHistogram): Unit = {
+    h.bins.foreach(update)
+    reduceToMaxSize
+  }
 
   override def npoints: Int = bins.map(_.count).sum
 
@@ -82,12 +92,12 @@ class BoundHistogram(binSeq: Seq[Bin], maxBins: Int, _bounds: (Double, Double)) 
       }
     }
 
-  override def uniform(point: Int): List[Double] = {
+  override def uniform(numPoints: Int): List[Double] = {
     val pointSet = mutable.HashSet[Double]()
     val npoints = bins.map(_.count).sum
     val sums = preComputeSums
-    for (i <- 1 until point) {
-      compute(sums, i, point, npoints) match {
+    for (i <- 1 until numPoints) {
+      compute(sums, i, numPoints, npoints) match {
         case Some(point) =>
           if (point < hist.head._1) {
             pointSet.add(hist.head._1)
@@ -157,7 +167,9 @@ class BoundHistogram(binSeq: Seq[Bin], maxBins: Int, _bounds: (Double, Double)) 
 
   def print = println(hist)
 
-  def reduceToMaxSize = while (hist.size > maxBins) reduce
+  def reduceToMaxSize = {
+    while (hist.size > maxBins) reduce
+  }
 
   private def reduce = {
     val arr = bins
@@ -185,17 +197,26 @@ class BoundHistogram(binSeq: Seq[Bin], maxBins: Int, _bounds: (Double, Double)) 
 
 object BoundHistogram {
 
-  def apply(bins: Seq[Bin], maxPoints: Int = 200): BoundHistogram = new BoundHistogram(bins, maxPoints, (0, 0))
+  def apply(bins: Iterable[Bin], maxPoints: Int = 200): BoundHistogram = new BoundHistogram(bins, maxPoints, (0, 0))
 
   def fromBin(bin: Bin): BoundHistogram = BoundHistogram(List(bin))
 
   def fromPoint(point: Double): BoundHistogram = BoundHistogram.fromBin(Bin(point, 1))
 
-  def merge(h1: BoundHistogram, h2: BoundHistogram, maxPoints: Int = 200): BoundHistogram = {
-    val newHist = BoundHistogram(h1.bins.toList, maxPoints)
+  def merge(h1: BoundHistogram, h2: BoundHistogram, maxPoints: Int = 50): BoundHistogram = {
+    val newHist = BoundHistogram(h1.bins, maxPoints)
     h2.bins.foreach(bin => newHist.update(bin))
     newHist.reduceToMaxSize
     newHist
+  }
+
+  def split(h1: BoundHistogram, point: Double): (BoundHistogram, BoundHistogram) = {
+    val (lbins, rbins) = (ListBuffer[Bin](), ListBuffer[Bin]())
+    for (bin <- h1.bins) {
+      if (bin.value < point) lbins += bin
+      else rbins += bin
+    }
+    (BoundHistogram(lbins), BoundHistogram(rbins))
   }
 
   def sum(h: BoundHistogram, p: Double): Double = h.leftSum(p)

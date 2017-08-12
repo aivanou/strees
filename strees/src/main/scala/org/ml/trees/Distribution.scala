@@ -3,9 +3,9 @@ package org.ml.trees
 import scala.collection.{Map, mutable}
 
 /**
-  * Represents the distribution of points on 2D plot.
   *
-  * The class contains functionality for working with tripple: (Label,Feature,Histogram), where
+  *
+  * The class contains functionality for working with triple: (Label,Feature,Histogram), where
   * Label - is a label, Feature - the index of the feature, and Histogram - the distribution of
   * the dataset for corresponding (Feature,Label).
   *
@@ -14,6 +14,9 @@ import scala.collection.{Map, mutable}
   */
 class Distribution(nlabels: Int, nfeatures: Int) {
 
+  /**
+    * Map represents the  (Label,FeatureId -> Histogram)
+    */
   private val distr = new mutable.HashMap[(Int, Int), BoundHistogram]()
 
   /**
@@ -34,7 +37,9 @@ class Distribution(nlabels: Int, nfeatures: Int) {
     */
   def add(pair: (Int, Int), newHist: BoundHistogram): Unit = {
     distr.get(pair) match {
-      case Some(hist) => distr.put(pair, BoundHistogram.merge(hist, newHist))
+      case Some(hist) =>
+        hist.merge(newHist)
+      //distr.put(pair, BoundHistogram.merge(hist, newHist))
       case None => distr.put(pair, newHist)
     }
   }
@@ -123,7 +128,11 @@ class Distribution(nlabels: Int, nfeatures: Int) {
   }
 
   def merge(p: (Int, Int), hist: BoundHistogram): Unit = distr.get(p) match {
-    case Some(myHist) => distr.put(p, BoundHistogram.merge(myHist, hist))
+    case Some(myHist) =>
+      Timer.start("hist.merge")
+      //      distr.put(p, BoundHistogram.merge(myHist, hist))
+      myHist.merge(hist)
+      Timer.stop("hist.merge")
     case None => distr.put(p, hist)
   }
 

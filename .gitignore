@@ -1,4 +1,7 @@
 .idea
+api/target
+strees/target
+*/project/target
 target
 project/target
 project/project/target

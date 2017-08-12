@@ -1,20 +1,22 @@
 package org.ml.trees
 
+import java.util.concurrent.atomic.AtomicReference
+
 import breeze.linalg.DenseVector
 
 import scala.annotation.tailrec
-import scala.collection.Map
+import scala.collection._
 
 class DecisionTree(minThreshold: Int, impurityThreshold: Double) {
 
-  private val unlabeledLeafs = scala.collection.mutable.HashSet[UnlabeledLeaf]()
-
   private var root: Node = new UnlabeledLeaf(null)
 
-  init
+  private var unlabeledLeafsRef: AtomicReference[immutable.HashSet[UnlabeledLeaf]] = init()
 
-  private def init(): Unit = {
-    unlabeledLeafs.add(root.asInstanceOf[UnlabeledLeaf])
+  private def init(): AtomicReference[immutable.HashSet[UnlabeledLeaf]] = {
+    val ref = new AtomicReference[immutable.HashSet[UnlabeledLeaf]]()
+    ref.set(immutable.HashSet[UnlabeledLeaf](root.asInstanceOf[UnlabeledLeaf]))
+    ref
   }
 
   def fitSet(ds: Dataset): Double = {
@@ -31,9 +33,17 @@ class DecisionTree(minThreshold: Int, impurityThreshold: Double) {
     error
   }
 
-  def converged: Boolean = unlabeledLeafs.isEmpty
+  def uleafs(): Int = uleafs(root)
 
-  def cnt: Int = unlabeledLeafs.size
+  def uleafs(node: Node): Int = node match {
+    case sp: SplitNode => uleafs(sp.left) + uleafs(sp.right)
+    case ul: UnlabeledLeaf => 1
+    case _ => 0
+  }
+
+  def converged: Boolean = unlabeledLeafsRef.get().isEmpty
+
+  def cnt: Int = unlabeledLeafsRef.get().size
 
   def fit(featureVector: DenseVector[Double]): Node = fit(featureVector, root)
 
@@ -54,10 +64,20 @@ class DecisionTree(minThreshold: Int, impurityThreshold: Double) {
     val (label, _) = distribution.reduce((p1, p2) => if (p1._2 > p2._2) p1 else p2)
     if (distribution.size == 1 || npoints <= minThreshold || impurityThreshold >= impurity) {
       val newLeaf = new LabeledLeaf(parent, label)
+      updateLeafs(leaf, (leafs, leaf) => leafs - leaf)
       setNode(parent, newLeaf, leaf)
       true
     } else {
       false
+    }
+  }
+
+  @tailrec
+  private def updateLeafs(leaf: UnlabeledLeaf, func: (immutable.HashSet[UnlabeledLeaf], UnlabeledLeaf) => immutable.HashSet[UnlabeledLeaf]): Unit = {
+    val prevLeafs = unlabeledLeafsRef.get()
+    val newLeafs = func(prevLeafs, leaf)
+    if (!unlabeledLeafsRef.compareAndSet(prevLeafs, newLeafs)) {
+      updateLeafs(leaf, func)
     }
   }
 
@@ -69,26 +89,22 @@ class DecisionTree(minThreshold: Int, impurityThreshold: Double) {
 
   def grow(leaf: UnlabeledLeaf, featureIndex: Int, splitValue: Double): Unit = {
     val newNode = splitNode(splitValue, featureIndex)
-    unlabeledLeafs.add(newNode.right.asInstanceOf[UnlabeledLeaf])
-    unlabeledLeafs.add(newNode.left.asInstanceOf[UnlabeledLeaf])
-    unlabeledLeafs.remove(leaf)
+    updateLeafs(leaf, (leafs, leaf) => leafs - leaf)
     if (leaf.parent == null) {
       root = newNode
     } else {
       val parent = leaf.parent
-      if (parent.left == leaf) {
-        parent.left = newNode
-      } else {
-        parent.right = newNode
-      }
+      setNode(parent, newNode, leaf)
       newNode.parent = parent
     }
   }
 
-  def splitNode(splitValue: Double, featureIndex: Int): Node = {
+  def splitNode(splitValue: Double, featureIndex: Int): SplitNode = {
     val splitNode = new SplitNode(null, null, null, splitValue, featureIndex)
     val leftLeaf = new UnlabeledLeaf(splitNode)
     val rightLeaf = new UnlabeledLeaf(splitNode)
+    updateLeafs(rightLeaf, (leafs, leaf) => leafs + leaf)
+    updateLeafs(leftLeaf, (leafs, leaf) => leafs + leaf)
     splitNode.left = leftLeaf
     splitNode.right = rightLeaf
     splitNode
@@ -105,10 +121,10 @@ class DecisionTree(minThreshold: Int, impurityThreshold: Double) {
   }
 }
 
-class Node(var left: Node, var right: Node, var parent: SplitNode)
+class Node(var parent: SplitNode)
 
-class SplitNode(left: Node, right: Node, parent: SplitNode, var splitValue: Double, var featureIndex: Int) extends Node(left, right, parent)
+class SplitNode(var left: Node, var right: Node, parent: SplitNode, var splitValue: Double, var featureIndex: Int) extends Node(parent)
 
-class LabeledLeaf(parent: SplitNode, var label: Int) extends Node(null, null, parent)
+class LabeledLeaf(parent: SplitNode, var label: Int) extends Node(parent)
 
-class UnlabeledLeaf(parent: SplitNode) extends Node(null, null, parent)
+class UnlabeledLeaf(parent: SplitNode) extends Node(parent)

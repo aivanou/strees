@@ -5,13 +5,14 @@ import breeze.linalg.{DenseMatrix, DenseVector}
 import scala.annotation.tailrec
 import scala.collection.mutable
 
+
 object Reader {
 
-  def fromCsv(path: String, hasHeaders: Boolean = false): Dataset = {
+  def fromCsv(path: String, hasHeaders: Boolean = false): Dataset[Double, Int] = {
     val (_, lines) = readCsv(path, true)
     val m = toMatirx(lines)
     val (features, labels) = (m(::, 1 to 13), m(::, 14).map(_.toInt))
-    Dataset(features, labels, 13, 2, labels.length)
+    new Dataset(features, labels, 13, 2, labels.length)
   }
 
   def toClass(vector: DenseVector[Double]): (DenseVector[Double], Map[Double, Double]) = {
@@ -54,44 +55,4 @@ object Reader {
   }
 
   def parseLine(line: String): List[String] = line.split(",").map(value => value.trim.toLowerCase).toList
-
-  def split(d: Dataset, f: Double): (Dataset, Dataset) = {
-    val rng = new java.util.Random(System.nanoTime())
-    val size = d.labels.length
-    val (trainSize, testSize) = (size - (size * f).toInt, (size * f).toInt)
-    val (trainSet, testSet) = (emptyDataset(trainSize, d.nfeatures, d.nlabels), emptyDataset(testSize, d.nfeatures, d.nlabels))
-    val testGroup = sample(testSize, d.size)
-    var trainInd = 0
-    var testInd = 0
-    for (i <- 0 until d.size) {
-      if (testGroup.contains(i)) {
-        testSet.features(testInd, ::) := d.features(i, ::)
-        testSet.labels(testInd) = d.labels(i)
-        testInd += 1
-      } else {
-        trainSet.features(trainInd, ::) := d.features(i, ::)
-        trainSet.labels.update(trainInd, d.labels(i))
-        trainInd += 1
-      }
-    }
-    (trainSet, testSet)
-  }
-
-  def sample(nsamples: Int, size: Int): Set[Int] = {
-    val samples = new Array[Int](nsamples)
-    (0 until nsamples).foreach(ind => samples(ind) = ind)
-    val rng = new java.util.Random(System.nanoTime())
-    for (ind <- nsamples until size) {
-      val j = rng.nextInt(ind)
-      if (j < nsamples) {
-        samples(j) = ind
-      }
-    }
-    samples.toSet
-  }
-
-  def emptyDataset(size: Int, nfeatures: Int, nlabels: Int): Dataset =
-    Dataset(DenseMatrix.create(size, nfeatures, new Array[Double](size * nfeatures)),
-      DenseVector.create(new Array[Int](size), 0, 1, size), nfeatures, nlabels, size)
-
 }

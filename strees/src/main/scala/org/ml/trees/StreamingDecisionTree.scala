@@ -2,64 +2,54 @@ package org.ml.trees
 
 import java.util.concurrent.TimeUnit
 
-import breeze.linalg.{DenseMatrix, DenseVector}
-
 import scala.collection.mutable.ListBuffer
 import scala.collection.{Map, mutable, _}
-import scala.concurrent.{Await, Future}
-
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.{Await, Future}
+import Timer._
 
-case class Split(start: Int, end: Int)
-
-case class Dataset(features: DenseMatrix[Double], labels: DenseVector[Int], nfeatures: Int, nlabels: Int, size: Int)
+private case class Split(start: Int, end: Int)
 
 /**
-  * TODO: unlabeledLeafs -- make safe
   *
   * @param dt
   * @param impurity
   */
-class SPDT(dt: DecisionTree, impurity: Impurity) {
+class SPDT(dt: DecisionTree, impurity: Impurity) extends Classifier {
 
-  def trainParallel(dataset: Dataset, ngroups: Int, maxIter: Int = 200): Unit = {
-    val groups = split(ngroups, dataset.size)
+  override def trainParallel(dataset: Dataset[Double, Int], maxIter: Int, numThreads: Int): ClReport = {
+    val groups = split(numThreads, dataset.size)
     var iter = 0
     while (!dt.converged && iter < maxIter) {
       iter += 1
-      Timer.start("compress.group")
-      val lst = groups.par.map(g => compressGroup(dataset, g)).toList
-      Timer.stop("compress.group")
-      Timer.start("compress.merge")
-      val mergedLeafs = mergeLeafs(dataset, lst)
-      Timer.stop("compress.merge")
-      println("Will process unlabeled leafs: ", mergedLeafs.size)
-      println(mergedLeafs.size, dt.cnt)
+      val lst = timed("SPDT.trainParallel.compressGroup") {
+        groups.par.map(g => compressGroup(dataset, g)).toList
+      }
+      val mergedLeafs = timed("SPDT.trainParallel.mergeLeafs") {
+        mergeLeafs(dataset, lst)
+      }
       if (mergedLeafs.isEmpty) return
       (for ((leaf, distr) <- mergedLeafs)
         yield Future[(Option[UnlabeledLeaf], Int, Double)] {
           computeSplit(leaf, distr)
         })
-        .map(ft => Await.result(ft, scala.concurrent.duration.Duration(500, TimeUnit.MILLISECONDS)))
+        .map(ft => Await.result(ft, scala.concurrent.duration.Duration(5000, TimeUnit.MILLISECONDS)))
         .map({
           case (Some(leaf), sa, sv) => dt.grow(leaf, sa, sv); true
           case (None, _, _) => false
         })
     }
-
+    ClReport()
   }
 
-  def train(dataset: Dataset, ngroups: Int, maxIters: Int = 100): Unit = {
+  override def train(dataset: Dataset[Double, Int], maxIter: Int): ClReport = {
+    val ngroups = 10
     val groups = split(ngroups, dataset.size)
     var iter = 0
-    while (iter < maxIters) {
+    while (!dt.converged && iter < maxIter) {
       iter += 1
-      Timer.start("compress.group")
       val lst = groups.par.map(g => compressGroup(dataset, g)).toList
-      Timer.stop("compress.group")
-      Timer.start("compress.merge")
       val mergedLeafs = mergeLeafs(dataset, lst)
-      Timer.stop("compress.merge")
       println("Will process unlabeled leafs: ", mergedLeafs.size)
       if (mergedLeafs.isEmpty) return
       for ((leaf, distr) <- mergedLeafs) {
@@ -70,10 +60,10 @@ class SPDT(dt: DecisionTree, impurity: Impurity) {
         }
       }
     }
-
+    ClReport()
   }
 
-  def computeSplit(leaf: UnlabeledLeaf, distr: Distribution): (Option[UnlabeledLeaf], Int, Double) = {
+  private def computeSplit(leaf: UnlabeledLeaf, distr: Distribution): (Option[UnlabeledLeaf], Int, Double) = {
     val leafImpurity = impurity.compute(computeNodeProbs(distr))
     if (!dt.tryLabel(leaf, leafImpurity, distr.labelDistribution())) {
       val (maxInfoGain, splitAttr, splitValue) = findMaxInfoGain(distr)
@@ -83,7 +73,7 @@ class SPDT(dt: DecisionTree, impurity: Impurity) {
     }
   }
 
-  def findMaxInfoGain(distr: Distribution): (Double, Int, Double) = {
+  private def findMaxInfoGain(distr: Distribution): (Double, Int, Double) = {
     val attrGrouped = distr.mergeByFeature()
     var maxInfoGain = Double.MinValue
     var mAttrInd = -1
@@ -101,11 +91,11 @@ class SPDT(dt: DecisionTree, impurity: Impurity) {
     (maxInfoGain, mAttrInd, splitValue)
   }
 
-  def findInfoGainForAttribute(hist: BoundHistogram, leafImpurity: Double,
-                               distr: Distribution, featureId: Int): (Double, Double) = {
-    Timer.start("hist.uniform")
-    val points = hist.uniform(hist.bins.size)
-    Timer.stop("hist.uniform")
+  private def findInfoGainForAttribute(hist: BoundHistogram, leafImpurity: Double,
+                                       distr: Distribution, featureId: Int): (Double, Double) = {
+    val points = timed("SPDT.hist.uniform") {
+      hist.uniform(hist.bins.size)
+    }
     var maxInfoGain = Double.MinValue
     var mPoint = 0.0
     val npoints = hist.npoints
@@ -121,9 +111,9 @@ class SPDT(dt: DecisionTree, impurity: Impurity) {
     (maxInfoGain, mPoint)
   }
 
-  def computeNodeProbs(distr: Distribution): List[Double] = distr.pointsFractionByLabels
+  private def computeNodeProbs(distr: Distribution): List[Double] = distr.pointsFractionByLabels
 
-  def split(ngroups: Int, nlen: Int): List[Split] = {
+  private def split(ngroups: Int, nlen: Int): List[Split] = {
     val splits = ListBuffer[Split]()
     val elsPerGroup = nlen / ngroups
     for (group <- 0 until ngroups - 1) {
@@ -134,7 +124,7 @@ class SPDT(dt: DecisionTree, impurity: Impurity) {
     splits.toList
   }
 
-  def mergeLeafs(dataset: Dataset, lst: List[Map[UnlabeledLeaf, Distribution]]): Map[UnlabeledLeaf, Distribution] = {
+  private def mergeLeafs(dataset: Dataset[Double, Int], lst: List[Map[UnlabeledLeaf, Distribution]]): Map[UnlabeledLeaf, Distribution] = {
     val leafs = lst.map(mp => mp.map {
       case (leaf, _) => leaf
     }).toSet.flatten
@@ -145,14 +135,12 @@ class SPDT(dt: DecisionTree, impurity: Impurity) {
     grouped.toMap
   }
 
-  def mergeLeaf(dataset: Dataset, lst: List[Map[UnlabeledLeaf, Distribution]], leaf: UnlabeledLeaf): Distribution = {
+  private def mergeLeaf(dataset: Dataset[Double, Int], lst: List[Map[UnlabeledLeaf, Distribution]], leaf: UnlabeledLeaf): Distribution = {
     var distr = Distribution.empty(dataset.nlabels, dataset.nfeatures)
     for (el <- lst) {
       el.get(leaf) match {
         case Some(d) =>
-          Timer.start("compress.merge.distr")
           distr = Distribution.merge(distr, d)
-          Timer.stop("compress.merge.distr")
         case None =>
       }
     }
@@ -167,7 +155,7 @@ class SPDT(dt: DecisionTree, impurity: Impurity) {
     * @param split
     * @return
     */
-  def compressGroup(dataset: Dataset, split: Split): Map[UnlabeledLeaf, Distribution] = {
+  def compressGroup(dataset: Dataset[Double, Int], split: Split): Map[UnlabeledLeaf, Distribution] = {
     val leafInds = mutable.HashMap[UnlabeledLeaf, ListBuffer[Int]]()
     for (ind <- split.start to split.end) {
       dt.fit(dataset.features(ind, ::).inner) match {
@@ -191,7 +179,7 @@ class SPDT(dt: DecisionTree, impurity: Impurity) {
     * @param group - indices of the dataset that belong to the group
     * @return (Int1,Int2):Hist => Int1 - label, Int2 - attrId
     */
-  def compressLeaf(dataset: Dataset, group: Seq[Int]): Distribution = {
+  def compressLeaf(dataset: Dataset[Double, Int], group: Seq[Int]): Distribution = {
     val distr = Distribution.empty(dataset.nlabels, dataset.nfeatures)
     for (ind <- group) {
       val featureVector = dataset.features(ind, ::).inner
@@ -228,29 +216,29 @@ class EntropyImpurity extends Impurity {
 
 object StreamingDecisionTree {
 
+  def apply(): SPDT = {
+    val dt = new DecisionTree(10, 0.12)
+    new SPDT(dt, new GiniImpurity())
+  }
+
   def main(args: Array[String]): Unit = {
     val path = "/Users/aliaksandrivanou/data/census_income/processed.csv"
     val dataset = Reader.fromCsv(path, true)
     Timer.start("split")
-    val (trainSet, testSet) = Reader.split(dataset, 0.3)
+    val (trainSet, testSet) = dataset.split(0.3)
     Timer.stop("split")
     println(Timer.provide("split"))
     val dt = new DecisionTree(10, 0.12)
     val spdt = new SPDT(dt, new GiniImpurity())
     println("read data, start processing")
     Timer.start("train")
-    spdt.trainParallel(trainSet, 10)
+    spdt.trainParallel(trainSet, 1000000, 10)
     Timer.stop("train")
     println("train time: ", Timer.provide("train"))
     val e = dt.fitSet(testSet)
     println(testSet.size, e)
     println(trainSet.size, dt.fitSet(trainSet))
-    println(Timer.provide("hist.uniform"))
-    println(Timer.provide("compress.group"))
-    println(Timer.provide("compress.merge"))
-    println(Timer.provide("compress.merge.distr"))
-    println(Timer.provide("hist.merge"))
+    Timer.report().records.foreach(println)
   }
-
 
 }

@@ -4,6 +4,7 @@ object Dependencies {
 
   val slf4jVersion = "1.6.4"
   val slf4jNop = "org.slf4j" % "slf4j-nop" % slf4jVersion
+  val circe = "0.8.0"
 
   val commonDependencies: Seq[ModuleID] = Seq(
     "org.scalacheck" %% "scalacheck" % "1.13.4" % "test",
@@ -19,8 +20,12 @@ object Dependencies {
   )
 
   val apiDependencies: Seq[ModuleID] = Seq(
-    "org.scalatra" %% "scalatra" % "2.5.+",
+    "org.scalatra" %% "scalatra" % "2.5.1",
     "javax.servlet" % "javax.servlet-api" % "3.1.0" % "provided",
-    "org.eclipse.jetty" % "jetty-webapp" % "9.2.15.v20160210" % "container;compile"
+    "org.eclipse.jetty" % "jetty-webapp" % "9.2.15.v20160210" % "container;compile",
+    "io.circe" %% "circe-core" % circe,
+    "io.circe" %% "circe-parser" % circe,
+    "io.circe" %% "circe-generic" % circe,
+    "io.circe" %% "circe-literal" % circe
   )
 }

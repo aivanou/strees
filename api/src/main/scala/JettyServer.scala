@@ -1,5 +1,6 @@
 
 
+import core.exec.{ModelManager, TaskManager}
 import org.eclipse.jetty.server.Server
 import org.eclipse.jetty.servlet.DefaultServlet
 import org.eclipse.jetty.webapp.WebAppContext
@@ -10,6 +11,7 @@ object JettyServer {
     val port = if (System.getenv("PORT") != null) System.getenv("PORT").toInt else 8080
     val server = new Server(port)
     val context = new WebAppContext()
+
     context setContextPath "/"
     context.setResourceBase("src/main/webapp")
     context.addEventListener(new ScalatraListener)

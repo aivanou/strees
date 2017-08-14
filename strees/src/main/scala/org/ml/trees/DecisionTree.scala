@@ -11,7 +11,7 @@ class DecisionTree(minThreshold: Int, impurityThreshold: Double) {
 
   private var root: Node = new UnlabeledLeaf(null)
 
-  private var unlabeledLeafsRef: AtomicReference[immutable.HashSet[UnlabeledLeaf]] = init()
+  private val unlabeledLeafsRef: AtomicReference[immutable.HashSet[UnlabeledLeaf]] = init()
 
   private def init(): AtomicReference[immutable.HashSet[UnlabeledLeaf]] = {
     val ref = new AtomicReference[immutable.HashSet[UnlabeledLeaf]]()
@@ -19,7 +19,7 @@ class DecisionTree(minThreshold: Int, impurityThreshold: Double) {
     ref
   }
 
-  def fitSet(ds: Dataset): Double = {
+  def fitSet(ds: Dataset[Double, Int]): Double = {
     var error = 0.0
     for (i <- 0 until ds.size) {
       val nd = fit(ds.features(i, ::).inner)
